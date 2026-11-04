@@ -292,7 +292,7 @@ function loginView(msg){
 app.innerHTML = `<div class="empty">กำลังโหลด…</div>`;
 DB.onStaff(u => {
   if (!u) return loginView();
-  if (u.role !== "admin") { loginView("บัญชีนี้ไม่มีสิทธิ์จัดการใบรับรอง (ต้องเป็นผู้ดูแลระบบ SMART SPK)"); return; }
+  if (u.role !== "admin") { loginView("บัญชีนี้ไม่มีสิทธิ์จัดการใบรับรอง (ต้องเป็นแอดมินงานกิจการนักเรียนใน SMART SPK)"); return; }
   $("#tabs").style.visibility = ""; $("#who").hidden = DB.mode === "demo"; $("#who").textContent = "ออกจากระบบ";
   $("#who").onclick = e => { e.stopPropagation(); DB.staffLogout(); };
   refresh();

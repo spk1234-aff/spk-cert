@@ -109,7 +109,11 @@ function LiveDB(){
       ready.then(() => au.onAuthStateChanged(auth, async u => {
         if (!u) return cb(null);
         const p = await get("ss_users/" + u.uid).catch(() => null);
-        cb(p && !p.disabled ? {uid: u.uid, name: p.name, role: p.role} : {uid: u.uid, role: "none"});
+        const pages = Array.isArray(p && p.adminPages) ? p.adminPages : [];
+        // สิทธิ์เดียวกับ affairs() ในกฎ Firestore: แอดมิน หรือแอดมินงานกิจการนักเรียน
+        const ok = p && !p.disabled && (p.role === "admin" || p.affairs === true || p.adminAff === true ||
+          pages.some(x => ["a-check","a-checkcheck","r-admin","a-merit","a-minus","a-edit","a-view","a-stat","a-stat2","a-late-month","a-rep-month","a-rep-term","u-admin","k-exam","k-exam-admin","a-comingadmin","coming","a-info","ad-info","q-admin"].includes(x)));
+        cb({uid: u.uid, name: p && p.name, role: ok ? "admin" : "none"});
       }));
     },
     async staffLogin(user, pw){

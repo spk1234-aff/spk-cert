@@ -1,6 +1,6 @@
     // ---------------- ใบรับรองความประพฤติ (ss_cert)
     // วางไว้ในบล็อก match /databases/{db}/documents { ... } ของกฎ SMART SPK
-    // (ก่อนบล็อก "spk-score-app (collection เดิม)") — ใช้ฟังก์ชัน staff() ที่มีอยู่แล้ว
+    // (ก่อนบล็อก "spk-score-app (collection เดิม)") — ใช้ฟังก์ชัน affairs() ที่มีอยู่แล้ว (เพิ่มเข้ากฎจริงแล้ว 4 พ.ย. 2569)
     function certReqOk(r) {
       return r.keys().hasOnly(['id', 'createdAt', 'status', 'birth', 'father', 'mother', 'purpose', 'purposeOther'])
         && r.status == 'pending'
@@ -12,15 +12,15 @@
     match /ss_cert/{key} {
       // นักเรียนอ่านได้เฉพาะเอกสารของตัวเอง (ต้องรู้ key แบบเดียวกับ ss_stu)
       allow get: if true;
-      allow list, delete: if staff();
+      allow list, delete: if affairs();
       // ยื่นคำขอแรก: ต้องเป็นนักเรียนที่มีอยู่จริงใน ss_stu
-      allow create: if staff() || (
-        exists(/databases/$(db)/documents/ss_stu/$(key))
+      allow create: if affairs() || (
+        exists(/databases/$(database)/documents/ss_stu/$(key))
         && request.resource.data.keys().hasOnly(['sid', 'name', 'cls', 'reqs'])
         && request.resource.data.reqs.size() == 1
         && certReqOk(request.resource.data.reqs[0]));
       // ยื่นคำขอถัดไป: ต่อท้ายได้ 1 รายการ ห้ามแก้รายการเดิม — ครูแก้ได้ทั้งหมด
-      allow update: if staff() || (
+      allow update: if affairs() || (
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reqs'])
         && request.resource.data.reqs.size() == resource.data.reqs.size() + 1
         && request.resource.data.reqs[0:resource.data.reqs.size()] == resource.data.reqs
@@ -28,5 +28,5 @@
     }
     match /ss_cert_cfg/{doc} {
       allow get: if true;
-      allow list, write: if staff();
+      allow list, write: if affairs();
     }
