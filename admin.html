@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ใบรับรองความประพฤติ — งานกิจการนักเรียน</title>
+<link rel="stylesheet" href="cert.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="top"><div class="wrap">
+  <img src="garuda.png" alt="">
+  <div><h1>ใบรับรองความประพฤติ</h1><div class="sub">งานกิจการนักเรียน · สำหรับครู</div></div>
+  <nav class="tabs" id="tabs">
+    <button data-t="req">คำขอ<span class="n" id="nPending" hidden></span></button>
+    <button data-t="print">พิมพ์<span class="n" id="nPrint" hidden></span></button>
+    <button data-t="stats">สถิติ</button>
+    <button data-t="set">ตั้งค่า</button>
+    <button class="ghost small" id="who" hidden></button>
+  </nav>
+</div></div>
+<div id="demo" class="demo" hidden>โหมดทดลอง — ข้อมูลตัวอย่าง เก็บไว้ในเบราว์เซอร์นี้เท่านั้น (บนเว็บจริงจะเชื่อม SMART SPK อัตโนมัติ)</div>
+<div class="wrap" id="app"></div>
+<div id="modal"></div>
+
+<script src="cert.js"></script>
+<script src="data.js"></script>
+<script>
+const $ = s => document.querySelector(s), app = $("#app"), E = Cert.esc;
+const STATUS = {pending:["รอตรวจ","b-pending"], approved:["อนุมัติ","b-approved"], printed:["พิมพ์แล้ว รอเซ็น","b-printed"],
+                ready:["พร้อมรับ","b-ready"], rejected:["ไม่อนุมัติ","b-rejected"]};
+const stOf = r => r.status === "approved" && r.printedAt ? "printed" : r.status;
+const badge = r => `<span class="badge ${STATUS[stOf(r)][1]}">${STATUS[stOf(r)][0]}</span>`;
+const fullName = r => r.prefix + r.fname + " " + r.lname;
+const purposeOf = r => r.purpose === "อื่น ๆ" ? (r.purposeOther || "อื่น ๆ") : r.purpose;
+const toast = t => { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.append(d); setTimeout(() => d.remove(), 2600); };
+let REQ = [], S = null, tab = "req";
+const conductCache = {};
+async function conduct(r){ if (!(r.sid in conductCache)) { try { conductCache[r.sid] = await DB.getConduct(r); } catch(e){ conductCache[r.sid] = null; } } return conductCache[r.sid]; }
+const isWarn = c => c && (c.score > S.maxDeduct || c.late > S.maxLate);
+const flag = c => !c ? "" : isWarn(c) ? "chk-warn" : "chk-ok";
+
+/* คำขอก่อนหน้าของคนเดียวกัน และใบที่ยังไม่หมดอายุ 60 วัน */
+function history(r){
+  const prev = REQ.filter(x => x.sid === r.sid && x.id !== r.id && x.createdAt < r.createdAt);
+  const valid = REQ.find(x => x.sid === r.sid && x.id !== r.id && x.status === "ready" && x.issueDate && Cert.daysBetween(x.issueDate, Cert.todayISO()) < 60);
+  return {count: prev.length, valid};
+}
+
+async function refresh(){
+  try { [REQ, S] = await Promise.all([DB.listRequests(), DB.getSettings()]); }
+  catch(e){ console.error(e); app.innerHTML = `<div class="card warnbox">โหลดข้อมูลไม่ได้ (${E(e.code || e.message)}) — ตรวจว่าเพิ่มกฎ Firestore ของระบบนี้แล้ว</div>`; return; }
+  const np = REQ.filter(r => r.status === "pending").length, nr = REQ.filter(r => r.status === "approved" && !r.printedAt).length;
+  $("#nPending").hidden = !np; $("#nPending").textContent = np;
+  $("#nPrint").hidden = !nr; $("#nPrint").textContent = nr;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
+  ({req: viewReq, print: viewPrint, stats: viewStats, set: viewSet})[tab]();
+}
+$("#tabs").onclick = e => { const b = e.target.closest("button[data-t]"); if (b) { tab = b.dataset.t; refresh(); } };
+
+/* ======================= คำขอ ======================= */
+let reqFilter = "pending", reqSearch = "";
+async function viewReq(){
+  const F = {pending:"รอตรวจ", approved:"อนุมัติ/รอพิมพ์", ready:"พร้อมรับ", rejected:"ไม่อนุมัติ", all:"ทั้งหมด"};
+  const q = reqSearch.trim();
+  const list = REQ.filter(r => (reqFilter === "all" || r.status === reqFilter) &&
+      (!q || r.sid.includes(q) || fullName(r).includes(q))).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  await Promise.all(list.map(r => conduct(r)));
+  app.innerHTML = `<div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div class="chips" id="chips">${Object.entries(F).map(([k, t]) => `<button data-f="${k}" class="${k === reqFilter ? "on" : ""}">${t} (${k === "all" ? REQ.length : REQ.filter(r => r.status === k).length})</button>`).join("")}</div>
+      <div style="width:260px"><input id="q" placeholder="ค้นหาชื่อ / เลขประจำตัว" value="${E(reqSearch)}"></div></div>
+    <div class="small muted" style="margin:6px 0">คะแนน = คะแนนความประพฤติที่ถูกหักสะสม (0 = ไม่เคยถูกหัก) · เกณฑ์เตือน: ถูกหักเกิน ${S.maxDeduct} หรือสายเกิน ${S.maxLate} วัน (แก้ได้ที่แท็บตั้งค่า)</div>
+    ${list.length ? `<div style="overflow:auto"><table><thead><tr><th>ยื่นเมื่อ</th><th>เลขประจำตัว</th><th>ชื่อ-สกุล</th><th>ชั้น</th><th>จุดประสงค์</th>
+      <th class="num">ถูกหัก</th><th class="num">สาย</th><th>เคยขอ</th><th>สถานะ</th></tr></thead><tbody>
+      ${list.map(r => { const c = conductCache[r.sid], h = history(r);
+        return `<tr class="click" data-id="${r.id}"><td>${Cert.shortDate(r.createdAt)}</td><td>${E(r.sid)}</td><td>${E(fullName(r))}</td>
+          <td>ม.${E(r.level)}/${E(r.room)}</td><td>${E(purposeOf(r))}</td>
+          <td class="num"><span class="badge ${flag(c)}">${c ? c.score : "?"}</span></td>
+          <td class="num"><span class="badge ${flag(c)}">${c ? c.late : "?"}</span></td>
+          <td>${h.count ? h.count + " ครั้ง" : "-"}${h.valid ? ` <span class="badge chk-warn" title="ใบเดิมยังไม่หมดอายุ">ใบเดิมยังใช้ได้</span>` : ""}</td>
+          <td>${badge(r)}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty">ไม่มีคำขอ</div>`}</div>`;
+  $("#chips").onclick = e => { const b = e.target.closest("button"); if (b) { reqFilter = b.dataset.f; viewReq(); } };
+  $("#q").oninput = e => { reqSearch = e.target.value; clearTimeout(viewReq.t); viewReq.t = setTimeout(() => viewReq().then(() => { const i = $("#q"); i.focus(); i.setSelectionRange(99, 99); }), 250); };
+  app.querySelectorAll("tr.click").forEach(tr => tr.onclick = () => openReq(tr.dataset.id));
+}
+
+async function openReq(id){
+  const r = REQ.find(x => x.id === id), c = await conduct(r), h = history(r);
+  const signer = S.signers[S.defaultSigner] || S.signers[0];
+  const warn = isWarn(c);
+  $("#modal").innerHTML = `<div class="modal-bg"><div class="modal">
+    <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">${E(fullName(r))} ${badge(r)}</h2><button class="ghost" id="x">ปิด ✕</button></div>
+    <div class="grid2" style="margin-top:8px"><div>
+      <div class="stat" style="grid-template-columns:1fr 1fr">
+        <div class="${flag(c)}"><b>${c ? c.score : "?"}</b><span>คะแนนความประพฤติที่ถูกหักสะสม</span></div>
+        <div class="${flag(c)}"><b>${c ? c.late : "?"}</b><span>มาสายสะสม (วัน)</span></div></div>
+      ${warn ? `<div class="warnbox">ต่ำกว่าเกณฑ์ที่ตั้งไว้ — ควรพิจารณาก่อนอนุมัติ</div>` : ""}
+      ${h.valid ? `<div class="warnbox">มีใบที่ออกเมื่อ ${Cert.shortDate(h.valid.issueDate)} ยังไม่หมดอายุ 60 วัน</div>` : ""}
+      <div class="small muted" style="margin-top:6px">ยื่นเมื่อ ${Cert.shortDate(r.createdAt)} · เพื่อ${E(purposeOf(r))} · เคยขอ ${h.count} ครั้ง</div>
+      <div class="row"><div class="f"><label>คำนำหน้า</label><input id="e_prefix" value="${E(r.prefix)}"></div>
+        <div class="f"><label>ชื่อ</label><input id="e_fname" value="${E(r.fname)}"></div>
+        <div class="f"><label>นามสกุล</label><input id="e_lname" value="${E(r.lname)}"></div></div>
+      <div class="row"><div class="f"><label>เลขประจำตัว</label><input id="e_sid" value="${E(r.sid)}" disabled></div>
+        <div class="f"><label>ชั้น ม.</label><input id="e_level" value="${E(r.level)}"></div>
+        <div class="f"><label>ห้อง</label><input id="e_room" value="${E(r.room)}"></div></div>
+      <label>วันเกิด</label><input id="e_birth" type="date" value="${E(r.birth)}">
+      <label>บิดา</label><input id="e_father" value="${E(r.father)}">
+      <label>มารดา</label><input id="e_mother" value="${E(r.mother)}">
+      ${r.status === "rejected" && r.rejectReason ? `<div class="warnbox">เหตุผลที่ไม่อนุมัติ: ${E(r.rejectReason)}</div>` : ""}
+      <div id="rejBox" hidden><label>เหตุผลที่ไม่อนุมัติ (นักเรียนจะเห็น)</label><input id="rej" placeholder="เช่น ให้มาพบครูกิจการนักเรียนก่อน"></div>
+      <div class="row" style="margin-top:14px">
+        ${r.status === "pending" || r.status === "rejected" ? `<button class="ok primary" id="approve">อนุมัติ</button>` : ""}
+        ${r.status !== "rejected" && r.status !== "ready" ? `<button class="danger" id="reject">ไม่อนุมัติ</button>` : ""}
+        <button id="saveOnly">บันทึกการแก้ไข</button></div>
+    </div><div><div class="preview"><div id="pv"></div></div></div></div></div></div>`;
+  const F = ["prefix","fname","lname","level","room","birth","father","mother"];
+  const val = () => Object.fromEntries(F.map(k => [k, $("#e_" + k).value.trim()]));
+  const draw = () => Cert.previewInto($("#pv"), Cert.certHTML({...r, ...val()}, r.signer || signer, {issueDate: r.issueDate, certNo: r.certNo, showCertNo: S.showCertNo}));
+  F.forEach(k => $("#e_" + k).oninput = draw); draw();
+  const close = () => $("#modal").innerHTML = "";
+  $("#x").onclick = close; $(".modal-bg").onclick = e => e.target.classList.contains("modal-bg") && close();
+  const done = async (patch, msg) => { try { await DB.updateRequest(r, {...val(), ...patch}); } catch(e){ return toast("บันทึกไม่สำเร็จ: " + (e.code || e.message)); } close(); toast(msg); refresh(); };
+  $("#saveOnly").onclick = () => done({}, "บันทึกแล้ว");
+  if ($("#approve")) $("#approve").onclick = () => done({status: "approved", rejectReason: "", approvedAt: Cert.todayISO()}, "อนุมัติแล้ว — ไปที่แท็บพิมพ์");
+  if ($("#reject")) $("#reject").onclick = () => {
+    if ($("#rejBox").hidden) { $("#rejBox").hidden = false; $("#rej").focus(); $("#reject").textContent = "ยืนยันไม่อนุมัติ"; return; }
+    done({status: "rejected", rejectReason: $("#rej").value.trim(), printedAt: null}, "บันทึกว่าไม่อนุมัติแล้ว");
+  };
+}
+
+/* ======================= พิมพ์ ======================= */
+let pSigner = null, pDate = null;
+function viewPrint(){
+  if (pSigner === null) pSigner = S.defaultSigner || 0;
+  if (!pDate) pDate = Cert.todayISO();
+  const toPrint = REQ.filter(r => r.status === "approved" && !r.printedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const printed = REQ.filter(r => r.status === "approved" && r.printedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const rows = (list, name) => list.length ? `<table><thead><tr><th><input type="checkbox" class="all" data-g="${name}" checked style="width:auto"></th><th>เลขประจำตัว</th><th>ชื่อ-สกุล</th><th>ชั้น</th><th>จุดประสงค์</th>${name === "b" ? "<th>ลงวันที่</th><th>เลขที่</th>" : "<th>อนุมัติเมื่อ</th>"}</tr></thead><tbody>
+    ${list.map(r => `<tr><td><input type="checkbox" class="pick" data-g="${name}" value="${r.id}" checked style="width:auto"></td><td>${E(r.sid)}</td><td>${E(fullName(r))}</td><td>ม.${E(r.level)}/${E(r.room)}</td><td>${E(purposeOf(r))}</td>
+      ${name === "b" ? `<td>${Cert.shortDate(r.issueDate)}</td><td>${E(r.certNo || "-")}</td>` : `<td>${Cert.shortDate(r.approvedAt || r.createdAt)}</td>`}</tr>`).join("")}</tbody></table>` : `<div class="empty">ไม่มีรายการ</div>`;
+  app.innerHTML = `<div class="card"><h2>1. รอพิมพ์ (${toPrint.length})</h2>
+    <div class="row"><div class="f"><label>ผู้ลงนาม</label><select id="signer">${S.signers.map((s, i) => `<option value="${i}" ${i == pSigner ? "selected" : ""}>${E(s.name)} ${s.acting ? "(รักษาการแทน)" : "(ผอ.)"}</option>`).join("")}</select></div>
+      <div class="f"><label>ลงวันที่</label><input type="date" id="pdate" value="${pDate}"></div>
+      <button class="primary" id="doPrint" ${toPrint.length ? "" : "disabled"}>พิมพ์ที่เลือก / บันทึก PDF</button></div>
+    <div style="margin-top:10px;overflow:auto">${rows(toPrint, "a")}</div></div>
+    <div class="card"><h2>2. พิมพ์แล้ว รอผู้อำนวยการลงนาม (${printed.length})</h2>
+    <div class="small muted">เมื่อเซ็น ติดรูป และประทับตราแล้ว กด "พร้อมรับ" นักเรียนจะเห็นสถานะในแอป</div>
+    <div class="row" style="margin:8px 0"><button class="ok primary" id="doReady" ${printed.length ? "" : "disabled"}>✓ พร้อมรับ (ที่เลือก)</button>
+      <button id="rePrint" ${printed.length ? "" : "disabled"}>พิมพ์ซ้ำ (ที่เลือก)</button></div>
+    <div style="overflow:auto">${rows(printed, "b")}</div></div>`;
+  $("#signer").onchange = e => pSigner = +e.target.value;
+  $("#pdate").onchange = e => pDate = e.target.value;
+  app.querySelectorAll(".all").forEach(a => a.onchange = () => app.querySelectorAll(`.pick[data-g="${a.dataset.g}"]`).forEach(c => c.checked = a.checked));
+  const picked = g => [...app.querySelectorAll(`.pick[data-g="${g}"]:checked`)].map(c => REQ.find(r => r.id === c.value));
+  $("#doPrint").onclick = async () => {
+    const list = picked("a"); if (!list.length) return toast("ยังไม่ได้เลือกรายการ");
+    const signer = S.signers[pSigner], year = Cert.academicYear(pDate), nos = await DB.nextCertNos(list.length, year);
+    const html = [];
+    for (const [i, r] of list.entries()) {
+      const patch = {signer, issueDate: pDate, certNo: `${nos[i]}/${year}`, printedAt: Cert.todayISO()};
+      await DB.updateRequest(r, patch); Object.assign(r, patch);
+      html.push(Cert.certHTML(r, signer, {issueDate: pDate, certNo: r.certNo, showCertNo: S.showCertNo}));
+    }
+    const ok = await Cert.printCerts(html);
+    if (!ok) toast("เบราว์เซอร์นี้สั่งพิมพ์ไม่ได้ — เปิดจากเว็บของโรงเรียนแทน");
+    refresh();
+  };
+  $("#rePrint").onclick = async () => {
+    const list = picked("b"); if (!list.length) return toast("ยังไม่ได้เลือกรายการ");
+    if (!await Cert.printCerts(list.map(r => Cert.certHTML(r, r.signer, {issueDate: r.issueDate, certNo: r.certNo, showCertNo: S.showCertNo}))))
+      toast("เบราว์เซอร์นี้สั่งพิมพ์ไม่ได้ — เปิดจากเว็บของโรงเรียนแทน");
+  };
+  $("#doReady").onclick = async () => {
+    const list = picked("b"); if (!list.length) return toast("ยังไม่ได้เลือกรายการ");
+    for (const r of list) await DB.updateRequest(r, {status: "ready", readyAt: Cert.todayISO()});
+    toast(`พร้อมรับ ${list.length} ใบ`); refresh();
+  };
+}
+
+/* ======================= สถิติ ======================= */
+let sMode = "ac", sYear = null, sSearch = "";
+function viewStats(){
+  const yOf = r => sMode === "ac" ? Cert.academicYear(r.createdAt) : Cert.fiscalYear(r.createdAt);
+  const years = [...new Set(REQ.map(yOf))].sort((a, b) => b - a);
+  if (sYear === null || (sYear !== "all" && !years.includes(sYear))) sYear = years[0] ?? "all";
+  const L = REQ.filter(r => sYear === "all" || yOf(r) === sYear).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const issued = L.filter(r => r.printedAt || r.status === "ready");
+  const people = new Set(L.map(r => r.sid)).size;
+  const group = (arr, key) => arr.reduce((m, r) => { const k = key(r); (m[k] = m[k] || []).push(r); return m; }, {});
+  const bars = (obj, order) => { const ks = order || Object.keys(obj).sort(); const max = Math.max(1, ...ks.map(k => (obj[k] || []).length));
+    return ks.map(k => { const n = (obj[k] || []).length; return `<div class="bar"><span class="l">${E(k)}</span><span class="t"><i style="width:${n / max * 100}%"></i></span><span class="v">${n}</span></div>`; }).join(""); };
+  // เดือนตามรอบที่เลือก
+  const startM = sMode === "ac" ? 5 : 10;
+  const monthKeys = Array.from({length: 12}, (_, i) => Cert.MONTHS_SHORT[(startM - 1 + i) % 12]);
+  const byMonth = group(L, r => Cert.MONTHS_SHORT[+r.createdAt.slice(5, 7) - 1]);
+  const byLevel = group(L, r => "ม." + r.level);
+  const byRoom = group(L, r => "ม." + r.level + "/" + r.room);
+  const byPurpose = group(L, purposeOf);
+  // ทะเบียน: ครั้งที่ของแต่ละคน
+  const seen = {}; const reg = L.map(r => ({...r, nth: (seen[r.sid] = (seen[r.sid] || 0) + 1)}));
+  const q = sSearch.trim(), regShow = reg.filter(r => !q || r.sid.includes(q) || fullName(r).includes(q)).reverse();
+  const label = sMode === "ac" ? "ปีการศึกษา" : "ปีงบประมาณ";
+  app.innerHTML = `<div class="card"><div class="row" style="align-items:center">
+      <div class="chips" id="mode"><button data-m="ac" class="${sMode === "ac" ? "on" : ""}">ปีการศึกษา</button><button data-m="fy" class="${sMode === "fy" ? "on" : ""}">ปีงบประมาณ</button></div>
+      <div style="width:200px"><select id="year"><option value="all">ทุกปี</option>${years.map(y => `<option value="${y}" ${y === sYear ? "selected" : ""}>${label} ${y}</option>`).join("")}</select></div>
+      <button id="xlsx" style="margin-left:auto">⬇ Export Excel</button></div></div>
+    <div class="stat" style="margin-bottom:14px">
+      <div><b>${L.length}</b><span>คำขอทั้งหมด</span></div><div><b>${people}</b><span>จำนวนนักเรียน (คน)</span></div>
+      <div><b>${issued.length}</b><span>ออกใบแล้ว</span></div><div><b>${L.filter(r => r.status === "pending").length}</b><span>รอตรวจ</span></div>
+      <div><b>${L.filter(r => r.status === "rejected").length}</b><span>ไม่อนุมัติ</span></div></div>
+    <div class="grid2"><div class="card"><h2>ตามเดือน</h2>${bars(byMonth, monthKeys)}</div>
+      <div class="card"><h2>ตามจุดประสงค์</h2>${bars(byPurpose)}</div>
+      <div class="card"><h2>ตามระดับชั้น</h2>${bars(byLevel, ["ม.1","ม.2","ม.3","ม.4","ม.5","ม.6"])}</div>
+      <div class="card"><h2>ตามห้อง</h2><div style="max-height:260px;overflow:auto">${bars(byRoom, Object.keys(byRoom).sort((a, b) => a.localeCompare(b, "th", {numeric: true})))}</div></div></div>
+    <div class="card"><div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">ทะเบียนคำขอ (${reg.length})</h2>
+      <div style="width:260px"><input id="sq" placeholder="ค้นหาชื่อ / เลขประจำตัว" value="${E(sSearch)}"></div></div>
+      <div style="overflow:auto;margin-top:8px">${regShow.length ? `<table><thead><tr><th>ยื่นเมื่อ</th><th>เลขประจำตัว</th><th>ชื่อ-สกุล</th><th>ชั้น</th><th>ครั้งที่</th><th>จุดประสงค์</th><th>ผู้ลงนาม</th><th>ลงวันที่</th><th>เลขที่</th><th>สถานะ</th></tr></thead><tbody>
+      ${regShow.map(r => `<tr><td>${Cert.shortDate(r.createdAt)}</td><td>${E(r.sid)}</td><td>${E(fullName(r))}</td><td>ม.${E(r.level)}/${E(r.room)}</td><td class="num">${r.nth}</td>
+        <td>${E(purposeOf(r))}</td><td>${E(r.signer?.name || "-")}</td><td>${Cert.shortDate(r.issueDate)}</td><td>${E(r.certNo || "-")}</td><td>${badge(r)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">ไม่มีข้อมูล</div>`}</div></div>`;
+  $("#mode").onclick = e => { const b = e.target.closest("button"); if (b) { sMode = b.dataset.m; sYear = null; viewStats(); } };
+  $("#year").onchange = e => { sYear = e.target.value === "all" ? "all" : +e.target.value; viewStats(); };
+  $("#sq").oninput = e => { sSearch = e.target.value; clearTimeout(viewStats.t); viewStats.t = setTimeout(() => { viewStats(); const i = $("#sq"); i.focus(); i.setSelectionRange(99, 99); }, 250); };
+  $("#xlsx").onclick = () => exportXlsx(reg, sYear === "all" ? "ทุกปี" : `${label} ${sYear}`, {byMonth, monthKeys, byLevel, byRoom, byPurpose, L, people, issued});
+}
+
+function loadScript(src){ return new Promise((ok, no) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = no; document.head.append(s); }); }
+async function exportXlsx(reg, title, g){
+  try { if (!window.XLSX) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"); }
+  catch(e){ return toast("โหลดตัวสร้าง Excel ไม่ได้"); }
+  const head = ["ยื่นเมื่อ","เลขประจำตัว","คำนำหน้า","ชื่อ","นามสกุล","ชั้น","ครั้งที่","จุดประสงค์","สถานะ","ผู้ลงนาม","ลงวันที่","เลขที่","เหตุผลไม่อนุมัติ"];
+  const rows = reg.map(r => [r.createdAt.slice(0, 10), r.sid, r.prefix, r.fname, r.lname, `ม.${r.level}/${r.room}`, r.nth, purposeOf(r),
+    STATUS[stOf(r)][0], r.signer?.name || "", r.issueDate || "", r.certNo || "", r.rejectReason || ""]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...rows]), "ทะเบียน");
+  const sum = [["สรุปใบรับรองความประพฤติ", title], [], ["คำขอทั้งหมด", g.L.length], ["จำนวนนักเรียน (คน)", g.people], ["ออกใบแล้ว", g.issued.length], [],
+    ["ตามเดือน", "จำนวน"], ...g.monthKeys.map(k => [k, (g.byMonth[k] || []).length]), [],
+    ["ตามระดับชั้น", "จำนวน"], ...Object.keys(g.byLevel).sort().map(k => [k, g.byLevel[k].length]), [],
+    ["ตามห้อง", "จำนวน"], ...Object.keys(g.byRoom).sort((a, b) => a.localeCompare(b, "th", {numeric: true})).map(k => [k, g.byRoom[k].length]), [],
+    ["ตามจุดประสงค์", "จำนวน"], ...Object.keys(g.byPurpose).map(k => [k, g.byPurpose[k].length])];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sum), "สรุป");
+  try { XLSX.writeFile(wb, `ใบรับรองความประพฤติ_${title}.xlsx`); } catch(e){ toast("เบราว์เซอร์นี้ดาวน์โหลดไฟล์ไม่ได้"); }
+}
+
+/* ======================= ตั้งค่า ======================= */
+function viewSet(){
+  const s = JSON.parse(JSON.stringify(S));
+  const draw = () => {
+    app.innerHTML = `<div class="card"><h2>ผู้ลงนาม</h2>
+      <table><thead><tr><th>ค่าเริ่มต้น</th><th>ชื่อ-สกุล (มีคำนำหน้า)</th><th>ตำแหน่ง</th><th></th></tr></thead><tbody>
+      ${s.signers.map((g, i) => `<tr><td><input type="radio" name="def" value="${i}" ${i == s.defaultSigner ? "checked" : ""} style="width:auto"></td>
+        <td><input class="sn" data-i="${i}" value="${E(g.name)}"></td>
+        <td><select class="sa" data-i="${i}"><option value="0" ${g.acting ? "" : "selected"}>ผู้อำนวยการ</option><option value="1" ${g.acting ? "selected" : ""}>รองผู้อำนวยการรักษาการแทน</option></select></td>
+        <td><button class="danger del" data-i="${i}" ${s.signers.length < 2 ? "disabled" : ""}>ลบ</button></td></tr>`).join("")}</tbody></table>
+      <button id="addS" style="margin-top:8px">+ เพิ่มผู้ลงนาม</button></div>
+      <div class="card"><h2>เกณฑ์เตือน</h2><div class="row">
+        <div class="f"><label>คะแนนความประพฤติที่ถูกหักสะสมเกิน</label><input type="number" id="maxDeduct" value="${s.maxDeduct}"></div>
+        <div class="f"><label>จำนวนวันสายมากกว่า</label><input type="number" id="maxLate" value="${s.maxLate}"></div></div>
+        <div class="small muted" style="margin-top:4px">ระบบแค่แสดงสีเตือน การอนุมัติยังเป็นการตัดสินใจของครู</div></div>
+      <div class="card"><h2>ใบรับรอง</h2>
+        <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" id="showNo" ${s.showCertNo ? "checked" : ""} style="width:auto"> พิมพ์เลขที่ใบ (เช่น "ที่ ๑๒/๒๕๖๙") มุมซ้ายบน ตรงกับแนวที่อยู่โรงเรียน</label>
+        <label>จุดประสงค์ให้นักเรียนเลือก (บรรทัดละ 1 รายการ, ต้องมี "อื่น ๆ" เป็นรายการสุดท้าย)</label>
+        <textarea id="purposes" rows="5">${E(s.purposes.join("\n"))}</textarea></div>
+      <div class="row"><button class="primary" id="save">บันทึกการตั้งค่า</button>
+        ${DB.mode === "demo" ? `<button class="danger" id="reset" style="margin-left:auto">ล้างข้อมูลทดลอง</button>` : ""}</div>`;
+    const sync = () => {
+      app.querySelectorAll(".sn").forEach(i => s.signers[i.dataset.i].name = i.value.trim());
+      app.querySelectorAll(".sa").forEach(i => s.signers[i.dataset.i].acting = i.value === "1");
+      s.defaultSigner = +(app.querySelector("input[name=def]:checked")?.value || 0);
+      s.maxDeduct = +$("#maxDeduct").value; s.maxLate = +$("#maxLate").value; s.showCertNo = $("#showNo").checked;
+      s.purposes = $("#purposes").value.split("\n").map(x => x.trim()).filter(Boolean);
+      if (!s.purposes.includes("อื่น ๆ")) s.purposes.push("อื่น ๆ");
+    };
+    $("#addS").onclick = () => { sync(); s.signers.push({name: "", acting: true}); draw(); };
+    app.querySelectorAll(".del").forEach(b => b.onclick = () => { sync(); s.signers.splice(+b.dataset.i, 1); s.defaultSigner = 0; draw(); });
+    $("#save").onclick = async () => { sync(); s.signers = s.signers.filter(g => g.name); await DB.saveSettings(s); toast("บันทึกแล้ว"); refresh(); };
+    if ($("#reset")) $("#reset").onclick = () => { if ($("#reset").dataset.c) { DB.resetDemo(); toast("ล้างแล้ว"); refresh(); } else { $("#reset").dataset.c = 1; $("#reset").textContent = "กดอีกครั้งเพื่อยืนยัน"; } };
+  };
+  draw();
+}
+
+$("#demo").hidden = DB.mode !== "demo";
+function loginView(msg){
+  $("#tabs").style.visibility = "hidden";
+  app.innerHTML = `<div class="card" style="max-width:440px;margin:30px auto"><h2>เข้าสู่ระบบครู</h2>
+    <div class="small muted">ใช้ชื่อผู้ใช้และรหัสผ่านเดียวกับ SMART SPK (ถ้าเข้า SMART SPK ไว้แล้วในเครื่องนี้ จะเข้าให้อัตโนมัติ)</div>
+    <label>ชื่อผู้ใช้</label><input id="u" autocomplete="username"><label>รหัสผ่าน</label><input id="p" type="password" autocomplete="current-password">
+    ${msg ? `<div class="warnbox">${E(msg)}</div>` : ""}<div class="row" style="margin-top:12px"><button class="primary" id="li">เข้าสู่ระบบ</button></div></div>`;
+  const go = async () => { $("#li").disabled = true; try { await DB.staffLogin($("#u").value, $("#p").value); } catch(e){ loginView("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง"); } };
+  $("#li").onclick = go; $("#p").onkeydown = e => e.key === "Enter" && go(); $("#u").focus();
+}
+app.innerHTML = `<div class="empty">กำลังโหลด…</div>`;
+DB.onStaff(u => {
+  if (!u) return loginView();
+  if (u.role !== "admin") { loginView("บัญชีนี้ไม่มีสิทธิ์จัดการใบรับรอง (ต้องเป็นผู้ดูแลระบบ SMART SPK)"); return; }
+  $("#tabs").style.visibility = ""; $("#who").hidden = DB.mode === "demo"; $("#who").textContent = "ออกจากระบบ";
+  $("#who").onclick = e => { e.stopPropagation(); DB.staffLogout(); };
+  refresh();
+});
+</script>
+</body>
+</html>

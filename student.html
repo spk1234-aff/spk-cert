@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ขอใบรับรองความประพฤติ</title>
+<link rel="stylesheet" href="cert.css">
+<link rel="stylesheet" href="app.css">
+<style>.wrap{max-width:760px}</style>
+</head>
+<body>
+<div class="top"><div class="wrap">
+  <img src="garuda.png" alt="">
+  <div><h1>ขอใบรับรองความประพฤติ</h1><div class="sub">งานกิจการนักเรียน โรงเรียนโซ่พิสัยพิทยาคม</div></div>
+  <button class="ghost" id="logout" style="margin-left:auto;display:none">ออกจากระบบ</button>
+</div></div>
+<div id="demo" class="demo" hidden>โหมดทดลอง — ข้อมูลเก็บไว้ในเบราว์เซอร์นี้เท่านั้น</div>
+<div class="wrap" id="app"></div>
+
+<script src="cert.js"></script>
+<script src="data.js"></script>
+<script>
+const $ = s => document.querySelector(s), app = $("#app"), E = Cert.esc;
+const STATUS = {pending:["รอครูตรวจ","b-pending"], approved:["อนุมัติแล้ว กำลังจัดทำ","b-approved"],
+                ready:["พร้อมรับที่ห้องกิจการนักเรียน","b-ready"], rejected:["ไม่อนุมัติ","b-rejected"]};
+let me = null, settings = null;
+const toast = t => { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.append(d); setTimeout(() => d.remove(), 2600); };
+async function start(){
+  $("#demo").hidden = DB.mode !== "demo";
+  app.innerHTML = `<div class="empty">กำลังโหลด…</div>`;
+  try { settings = await DB.getSettings(); me = await DB.studentSession(); }
+  catch(e){ app.innerHTML = `<div class="card warnbox">เชื่อมต่อระบบไม่ได้ ลองใหม่อีกครั้ง</div>`; return; }
+  me ? home() : loginView();
+}
+
+async function loginView(){
+  $("#logout").style.display = "none";
+  const idOnly = await DB.portalIdOnly();
+  app.innerHTML = `<div class="card"><h2>เข้าสู่ระบบ</h2>
+    <label>เลขประจำตัวนักเรียน</label>
+    <div class="row"><div class="f"><input id="sid" inputmode="numeric" autocomplete="off" placeholder="เช่น 13999"></div>
+    ${idOnly ? "" : `<div class="f"><input id="pw" type="password" placeholder="รหัสผ่าน (เหมือน SMART SPK)"></div>`}
+    <button class="primary" id="go">เข้าสู่ระบบ</button></div>
+    <div class="small muted" style="margin-top:6px">ถ้าเข้า SMART SPK ไว้แล้วในเครื่องนี้ ระบบจะจำให้อัตโนมัติ</div>
+    <div id="err" class="warnbox" hidden></div>
+    ${DB.mode === "demo" ? `<p class="small muted">ทดลองใช้เลข: ${DB.roster.map(s => s.id).join(", ")}</p>` : ""}</div>`;
+  const go = async () => {
+    const v = $("#sid").value.trim(); if (!v) return;
+    $("#go").disabled = true;
+    try { me = await DB.studentLogin(v, $("#pw")?.value || ""); } catch(e){ me = null; }
+    $("#go").disabled = false;
+    if (!me) { $("#err").hidden = false; $("#err").textContent = idOnly ? "ไม่พบเลขประจำตัวนี้ ตรวจสอบอีกครั้ง หรือติดต่อห้องกิจการนักเรียน" : "เลขประจำตัวหรือรหัสผ่านไม่ถูกต้อง"; return; }
+    home();
+  };
+  $("#go").onclick = go; $("#sid").onkeydown = e => e.key === "Enter" && go(); $("#sid").focus();
+}
+
+async function home(){
+  $("#logout").style.display = "";
+  const list = (await DB.listMine(me)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const pending = list.some(r => r.status === "pending" || r.status === "approved");
+  app.innerHTML = `<div class="card"><div class="row" style="align-items:center">
+      <div class="f"><h2 style="margin:0">${E(me.prefix + me.fname + " " + me.lname)}</h2>
+      <div class="muted">เลขประจำตัว ${E(me.sid)} · ม.${E(me.level)}/${E(me.room)}</div></div>
+      <button class="primary" id="new" ${pending ? "disabled" : ""}>+ ยื่นคำขอใหม่</button></div>
+      ${pending ? `<div class="small muted" style="margin-top:6px">มีคำขอที่กำลังดำเนินการอยู่ รอให้เสร็จก่อนจึงยื่นใหม่ได้</div>` : ""}</div>
+    <div class="card"><h2>คำขอของฉัน</h2>
+    ${list.length ? list.map(r => `<div style="border-top:1px solid var(--line);padding:8px 0">
+        <div class="row" style="align-items:center;justify-content:space-between">
+          <div>ยื่นเมื่อ ${Cert.shortDate(r.createdAt)} · ${E(r.purpose === "อื่น ๆ" ? r.purposeOther : r.purpose)}</div>
+          <span class="badge ${STATUS[r.status][1]}">${STATUS[r.status][0]}</span></div>
+        ${r.status === "rejected" && r.rejectReason ? `<div class="warnbox">เหตุผล: ${E(r.rejectReason)}</div>` : ""}
+        ${r.status === "ready" ? `<div class="small muted">ออกให้ ${Cert.shortDate(r.issueDate)} · ใช้ได้ถึง ${Cert.shortDate(addDays(r.issueDate, 60))}</div>` : ""}
+      </div>`).join("") : `<div class="empty">ยังไม่มีคำขอ</div>`}</div>`;
+  $("#new").onclick = formView;
+}
+const addDays = (iso, n) => new Date(new Date(iso).getTime() + n*864e5).toISOString().slice(0,10);
+
+function formView(){
+  const P = settings.purposes;
+  app.innerHTML = `<div class="card"><h2>ยื่นคำขอใบรับรองความประพฤติ</h2>
+    <div class="muted small">ชื่อ ชั้น และเลขประจำตัวดึงจากระบบ หากไม่ถูกต้องให้แจ้งห้องกิจการนักเรียน</div>
+    <label>วันเดือนปีเกิด</label><input id="birth" type="date" max="${Cert.todayISO()}">
+    <label>ชื่อ-สกุลบิดา (มีคำนำหน้า)</label><input id="father" placeholder="เช่น นายสมชาย ใจดี">
+    <label>ชื่อ-สกุลมารดา (มีคำนำหน้า)</label><input id="mother" placeholder="เช่น นางสมศรี ใจดี">
+    <label>นำไปใช้เพื่อ</label><select id="purpose">${P.map(p => `<option>${E(p)}</option>`).join("")}</select>
+    <div id="otherBox" hidden><label>ระบุ</label><input id="purposeOther"></div>
+    <label style="font-weight:400;display:flex;gap:8px;align-items:center;margin-top:14px">
+      <input type="checkbox" id="ok" style="width:auto"> ข้าพเจ้าตรวจสอบแล้วว่าข้อมูลถูกต้อง</label>
+    <div id="err" class="warnbox" hidden></div>
+    <div class="row" style="margin-top:12px"><button id="back">ยกเลิก</button><button class="primary" id="send">ส่งคำขอ</button></div></div>
+    <div class="card"><h2>ตัวอย่างใบรับรอง</h2><div class="muted small">ตรวจตัวสะกดให้ถูกต้อง ใบจริงครูเป็นผู้พิมพ์และให้ผู้อำนวยการลงนาม</div>
+    <div class="preview" style="margin-top:8px"><div id="pv"></div></div></div>`;
+  const val = () => ({...me, birth: $("#birth").value, father: $("#father").value.trim(), mother: $("#mother").value.trim(),
+                      purpose: $("#purpose").value, purposeOther: $("#purposeOther").value.trim()});
+  const signer = settings.signers[settings.defaultSigner] || settings.signers[0];
+  const draw = () => { $("#otherBox").hidden = $("#purpose").value !== "อื่น ๆ"; Cert.previewInto($("#pv"), Cert.certHTML(val(), signer, {})); };
+  app.querySelectorAll("input,select").forEach(el => el.addEventListener("input", draw)); draw();
+  $("#back").onclick = home;
+  $("#send").onclick = async () => {
+    const v = val(), err = [];
+    if (!v.birth) err.push("กรอกวันเกิด");
+    const pre = /^(นาย|นาง|นางสาว|น\.ส\.|ว่าที่|ด\.ต\.|จ\.|ส\.|พ\.|ร\.|พล|ดร\.|ผศ\.|รศ\.|ศ\.|พระ|สิบ|จ่า|พัน|ร้อย)/;
+    if (!v.father || !pre.test(v.father)) err.push("กรอกชื่อบิดาพร้อมคำนำหน้า (เช่น นาย)");
+    if (!v.mother || !pre.test(v.mother)) err.push("กรอกชื่อมารดาพร้อมคำนำหน้า (เช่น นาง / นางสาว)");
+    if (v.purpose === "อื่น ๆ" && !v.purposeOther) err.push("ระบุจุดประสงค์");
+    if (!$("#ok").checked) err.push("ติ๊กยืนยันว่าข้อมูลถูกต้อง");
+    if (err.length) { $("#err").hidden = false; $("#err").innerHTML = err.map(E).join("<br>"); return; }
+    $("#send").disabled = true;
+    try { await DB.addRequest(me, v); } catch(e){ $("#send").disabled = false; $("#err").hidden = false; $("#err").textContent = "ส่งไม่สำเร็จ ลองใหม่อีกครั้ง"; return; }
+    toast("ส่งคำขอแล้ว"); home();
+  };
+}
+$("#logout").onclick = () => { DB.studentLogout(); me = null; loginView(); };
+start();
+</script>
+</body>
+</html>

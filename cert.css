@@ -1,0 +1,37 @@
+/* ใบรับรองความประพฤติ — หน้า A4 (พิกัดเป็น pt วัดจากไฟล์ Pages ต้นฉบับ) */
+@font-face{font-family:"SarabunIT9";src:url(fonts/THSarabunIT9.ttf) format("truetype");font-weight:400}
+@font-face{font-family:"SarabunIT9";src:url(fonts/THSarabunIT9-Bold.ttf) format("truetype");font-weight:700}
+
+/* ไฟล์ฟอนต์ชั่วคราว (TH Sarabun New เวอร์ชันเว็บ) ตัวใหญ่กว่าปกติ ต้องใช้ 10.48pt = 16pt จริง
+   ถ้าเปลี่ยนเป็นไฟล์ TH SarabunIT๙ ของแท้ ให้แก้เป็น 16pt */
+:root{--cert-fs:10.48pt}
+
+.cert-page{width:595.3pt;height:841.9pt;background:#fff;color:#000;position:relative;overflow:hidden;
+  font-family:"SarabunIT9",sans-serif;font-size:var(--cert-fs);line-height:18pt}
+.cert-page .abs{position:absolute;white-space:nowrap}
+.cert-page .garuda{position:absolute;left:263pt;top:34pt;width:68pt;height:77pt}
+.cert-page .title{left:0;right:0;top:138pt;text-align:center;font-weight:700}
+.cert-page .certno{left:72pt;top:169pt}
+.cert-page .addr{left:396pt;top:169pt}
+.cert-page .date{right:93pt;top:236pt}
+.cert-page .body{position:absolute;left:72pt;top:272pt;width:451pt;text-indent:42pt;text-align:left}
+.cert-page .nw{white-space:nowrap}
+.cert-page .issued{margin-top:13pt;text-indent:36pt}
+.cert-page .sign{left:0;right:0;top:535pt;text-align:center}
+.cert-page .photo{position:absolute;left:105pt;top:627pt;width:81pt;height:100pt;border:1pt solid #000}
+.cert-page .note{left:0;right:0;top:742pt;text-align:center;font-weight:700}
+
+/* ย่อสำหรับแสดงตัวอย่างบนจอ */
+.cert-scale{transform-origin:top left}
+
+/* พิมพ์ */
+@page{size:A4;margin:0}
+#print-area{display:none}
+@media print{
+  body *{visibility:hidden}
+  #print-area,#print-area *{visibility:visible}
+  #print-area{display:block;position:absolute;left:0;top:0}
+  #print-area .cert-page{break-after:page;page-break-after:always}
+  #print-area .cert-page:last-child{break-after:auto;page-break-after:auto}
+  html,body{background:#fff!important;margin:0!important;padding:0!important}
+}
